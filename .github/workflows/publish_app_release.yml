@@ -251,7 +251,7 @@ jobs:
       - name: Echo version content
         run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
 
-      # 自动创建并推送 Tag（仅限自用）
+      # 自动创建并推送 Tag（仅限自用）【修复：指定 shell 为 bash】
       - name: 自动创建并推送 Tag（仅限自用）
         if: github.event_name == 'workflow_dispatch'
         run: |
@@ -262,6 +262,7 @@ jobs:
             git tag v$VERSION
             git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v$VERSION
           fi
+        shell: bash
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
