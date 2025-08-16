@@ -5,17 +5,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-  
+
 jobs:
   build-mac-ios-android:
     runs-on: macos-latest
     permissions:
       contents: write
     steps:
-      #签出代码 
+      #签出代码（去掉 ref: master）
       - uses: actions/checkout@v4
-        with:
-          ref: master
 
       #APK签名设置
       - name: Download Android keystore
@@ -30,20 +28,20 @@ jobs:
           echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
           echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
           echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
-     
+
       #设置JAVA环境
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: "17"
           cache: 'gradle'
-      
+
       #设置Flutter
       - name: Flutter action
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.x'
-          cache: true 
+          cache: true
 
       # 打开MAC Desktop支持
       - name: Enable Flutter Desktop
@@ -68,7 +66,7 @@ jobs:
         run: |
           cd simple_live_app
           flutter build apk --release --split-per-abi
-      
+
       #上传APK至Artifacts
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
@@ -84,7 +82,7 @@ jobs:
         run: |
           cd simple_live_app
           flutter build ios --release --no-codesign
-      
+
       #创建未签名ipa
       - name: Create IPA
         run: |
@@ -94,7 +92,7 @@ jobs:
           cd build/ios/iphoneos/
           zip -q -r ios_no_sign.ipa Payload
           cd ../../..
-      
+
       #上传IPA至Artifacts
       - name: Upload IPA to Artifacts
         uses: actions/upload-artifact@v4
@@ -102,7 +100,7 @@ jobs:
           name: ios
           path: |
             simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
-      
+
       # 打包MAC
       - name: Build MacOS
         run: |
@@ -147,16 +145,13 @@ jobs:
       #完成
       - run: echo "🍏 This job's status is ${{ job.status }}."
 
-  # 打包Linux
   build-linux:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      # 签出代码
+      # 签出代码（去掉 ref: master）
       - uses: actions/checkout@v4
-        with:
-          ref: master
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -215,19 +210,15 @@ jobs:
           files: |
             simple_live_app/build/dist/*/*.deb
             simple_live_app/build/dist/*/*.zip
-        #完成
       - run: echo "🍏 Linux job's status is ${{ job.status }}."
 
-  # 打包Windows
   build-windows:
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
-      # 签出代码
+      # 签出代码（去掉 ref: master）
       - uses: actions/checkout@v4
-        with:
-          ref: master
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -281,5 +272,4 @@ jobs:
             simple_live_app/build/dist/*/*.msix
             simple_live_app/build/dist/*/*.zip
 
-      #完成
       - run: echo "🍏 Windows job's status is ${{ job.status }}."
