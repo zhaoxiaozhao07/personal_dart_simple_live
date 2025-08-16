@@ -193,10 +193,13 @@ jobs:
           VERSION=$(jq -r .version < assets/app_version.json)
           git config --global user.email "actions@github.com"
           git config --global user.name "github-actions"
+          git fetch --tags
           if ! git describe --exact-match --tags HEAD; then
             git tag v$VERSION
             git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v$VERSION
           fi
+          git fetch --tags
+        shell: bash
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
