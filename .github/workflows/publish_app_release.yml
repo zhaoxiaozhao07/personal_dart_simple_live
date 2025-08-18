@@ -1,20 +1,22 @@
 name: app-build-action
-# 推送Tag或手动触发
+#推送Tag时触发
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-
 jobs:
   build-mac-ios-android:
     runs-on: macos-latest
     permissions:
       contents: write
     steps:
+      #签出代码 
       - uses: actions/checkout@v4
+        with:
+          ref: master
 
-      # APK签名设置
+      #APK签名设置
       - name: Download Android keystore
         id: android_keystore
         uses: timheuer/base64-to-file@v1.2
@@ -27,38 +29,46 @@ jobs:
           echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
           echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
           echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
-
+     
+      #设置JAVA环境
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: "17"
           cache: 'gradle'
-
+      
+      #设置Flutter
       - name: Flutter action
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.x'
-          cache: true
+          cache: true 
 
+      # 打开MAC Desktop支持
       - name: Enable Flutter Desktop
         run: flutter config --enable-macos-desktop
 
+      #更新Flutter的packages
       - name: Restore packages
         run: |
           cd simple_live_app
           flutter pub get
 
+      # 安装appdmg npm install -g appdmg
       - name: Install appdmg
         run: npm install -g appdmg
 
+      # 设置flutter_distributor环境
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
 
+      #打包APK
       - name: Build APK
         run: |
           cd simple_live_app
           flutter build apk --release --split-per-abi
-
+      
+      #上传APK至Artifacts
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -68,11 +78,13 @@ jobs:
             simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
 
+      #打包iOS
       - name: Build IPA
         run: |
           cd simple_live_app
           flutter build ios --release --no-codesign
-
+      
+      #创建未签名ipa
       - name: Create IPA
         run: |
           cd simple_live_app
@@ -81,19 +93,22 @@ jobs:
           cd build/ios/iphoneos/
           zip -q -r ios_no_sign.ipa Payload
           cd ../../..
-
+      
+      #上传IPA至Artifacts
       - name: Upload IPA to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ios
           path: |
             simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
-
+      
+      # 打包MAC
       - name: Build MacOS
         run: |
           cd simple_live_app
           flutter_distributor package --platform macos --targets dmg,zip --skip-clean
 
+      # 上传MAC至Artifacts
       - name: Upload MacOS to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -102,6 +117,7 @@ jobs:
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
 
+      #读取版本信息
       - name: Read version
         id: version
         uses: juliangruber/read-file-action@v1
@@ -112,18 +128,7 @@ jobs:
       - name: Echo version content
         run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
 
-      # 自动创建并推送 Tag（仅限自用）
-      - name: 自动创建并推送 Tag（仅限自用）
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          VERSION=$(jq -r .version < assets/app_version.json)
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
-          if ! git describe --exact-match --tags HEAD; then
-            git tag v$VERSION
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v$VERSION
-          fi
-
+      #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
@@ -138,36 +143,47 @@ jobs:
             simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
-
+      #完成
       - run: echo "🍏 This job's status is ${{ job.status }}."
 
+  # 打包Linux
   build-linux:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
+      # 签出代码
       - uses: actions/checkout@v4
+        with:
+          ref: master
+      # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.22.x"
           cache: true
+      # 安装依赖
       - name: Update apt-get
         run: sudo apt-get update
       - name: Install Dependencies
         run: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv
+      # 打开Linux Desktop支持
       - name: Enable Flutter Desktop
         run: flutter config --enable-linux-desktop
+      # 更新Flutter的packages
       - name: Restore Packages
         run: |
           cd simple_live_app
           flutter pub get
+      # 设置flutter_distributor环境
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
+      # build Linux ZIP\DMG
       - name: Build Linux
         run: |
           cd simple_live_app
           flutter_distributor package --platform linux --targets deb,zip --skip-clean
+      # 上传Linux包至Artifacts
       - name: Upload Linux APP to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -176,6 +192,7 @@ jobs:
             simple_live_app/build/dist/*/*.deb
             simple_live_app/build/dist/*/*.zip
 
+      # 读取版本信息
       - name: Read version
         id: version
         uses: juliangruber/read-file-action@v1
@@ -186,21 +203,7 @@ jobs:
       - name: Echo version content
         run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
 
-      # 自动创建并推送 Tag（仅限自用）
-      - name: 自动创建并推送 Tag（仅限自用）
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          VERSION=$(jq -r .version < assets/app_version.json)
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
-          git fetch --tags
-          if ! git describe --exact-match --tags HEAD; then
-            git tag v$VERSION
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v$VERSION
-          fi
-          git fetch --tags
-        shell: bash
-
+      #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
@@ -211,14 +214,20 @@ jobs:
           files: |
             simple_live_app/build/dist/*/*.deb
             simple_live_app/build/dist/*/*.zip
+        #完成
       - run: echo "🍏 Linux job's status is ${{ job.status }}."
 
+  # 打包Windows
   build-windows:
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
+      # 签出代码
       - uses: actions/checkout@v4
+        with:
+          ref: master
+      # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -230,12 +239,16 @@ jobs:
         run: |
           cd simple_live_app
           flutter pub get
+      # 设置flutter_distributor环境
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
+      # build Windows ZIP\MSIX
       - name: Build Windows
         run: |
           cd simple_live_app
           flutter_distributor package --platform windows --targets msix,zip --skip-clean
+
+      # 上传Windows至Artifacts
       - name: Upload Windows APP to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -244,6 +257,7 @@ jobs:
             simple_live_app/build/dist/*/*.msix
             simple_live_app/build/dist/*/*.zip
 
+      # 读取版本信息
       - name: Read version
         id: version
         uses: juliangruber/read-file-action@v1
@@ -254,20 +268,7 @@ jobs:
       - name: Echo version content
         run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
 
-      # 自动创建并推送 Tag（仅限自用）【修复：指定 shell 为 bash，并强制 fetch 最新 tag】
-      - name: 自动创建并推送 Tag（仅限自用）
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          VERSION=$(jq -r .version < assets/app_version.json)
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
-          if ! git describe --exact-match --tags HEAD; then
-            git tag v$VERSION
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} v$VERSION
-          fi
-          git fetch --tags
-        shell: bash
-
+      #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
@@ -279,4 +280,5 @@ jobs:
             simple_live_app/build/dist/*/*.msix
             simple_live_app/build/dist/*/*.zip
 
+      #完成
       - run: echo "🍏 Windows job's status is ${{ job.status }}."
