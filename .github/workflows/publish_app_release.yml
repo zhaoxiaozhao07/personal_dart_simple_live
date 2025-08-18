@@ -19,13 +19,13 @@ jobs:
       #APK签名设置 (如果secrets存在则使用，否则跳过)
       - name: Download Android keystore
         id: android_keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.KEYSTORE_BASE64 }}
         uses: timheuer/base64-to-file@v1.2
         with:
           fileName: keystore.jks
           encodedString: ${{ secrets.KEYSTORE_BASE64 }}
       - name: Create key.properties
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
           echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
@@ -66,20 +66,20 @@ jobs:
 
       #打包APK (如果有签名配置则构建release，否则构建debug)
       - name: Build APK (Release)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           cd simple_live_app
           flutter build apk --release --split-per-abi
 
       - name: Build APK (Debug)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
+        if: ${{ !secrets.KEYSTORE_BASE64 }}
         run: |
           cd simple_live_app
           flutter build apk --debug --split-per-abi
       
       #上传APK至Artifacts (Release版本)
       - name: Upload APK to Artifacts (Release)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.KEYSTORE_BASE64 }}
         uses: actions/upload-artifact@v4
         with:
           name: android
@@ -90,7 +90,7 @@ jobs:
 
       #上传APK至Artifacts (Debug版本)
       - name: Upload APK to Artifacts (Debug)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
+        if: ${{ !secrets.KEYSTORE_BASE64 }}
         uses: actions/upload-artifact@v4
         with:
           name: android
@@ -100,18 +100,21 @@ jobs:
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-debug.apk
 
       # 准备APK文件用于Release (统一文件名)
-      - name: Prepare APK files for Release
+      - name: Prepare APK files for Release (Signed)
+        if: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           mkdir -p simple_live_app/build/release_apks
-          if [ "${{ secrets.KEYSTORE_BASE64 }}" != "" ]; then
-            cp simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk simple_live_app/build/release_apks/
-            cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk simple_live_app/build/release_apks/
-            cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk simple_live_app/build/release_apks/
-          else
-            cp simple_live_app/build/app/outputs/flutter-apk/app-x86_64-debug.apk simple_live_app/build/release_apks/app-x86_64-release.apk
-            cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk simple_live_app/build/release_apks/app-arm64-v8a-release.apk
-            cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk simple_live_app/build/release_apks/app-armeabi-v7a-release.apk
-          fi
+          cp simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk simple_live_app/build/release_apks/
+          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk simple_live_app/build/release_apks/
+          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk simple_live_app/build/release_apks/
+
+      - name: Prepare APK files for Release (Debug)
+        if: ${{ !secrets.KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p simple_live_app/build/release_apks
+          cp simple_live_app/build/app/outputs/flutter-apk/app-x86_64-debug.apk simple_live_app/build/release_apks/app-x86_64-release.apk
+          cp simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk simple_live_app/build/release_apks/app-arm64-v8a-release.apk
+          cp simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk simple_live_app/build/release_apks/app-armeabi-v7a-release.apk
 
       #打包iOS
       - name: Build IPA
