@@ -51,7 +51,12 @@ jobs:
       # 打开MAC Desktop支持
       - name: Enable Flutter Desktop
         run: flutter config --enable-macos-desktop
-
+      # 更新Flutter的packages
+      - name: Clean Flutter
+        run: |
+          cd simple_live_app
+          flutter clean
+          rm -rf build/
       # 更新Flutter的packages
       - name: Restore packages
         run: |
