@@ -1,6 +1,7 @@
 name: app-build-action
-#推送Tag时触发
+#支持手动触发与Tag推送时触发
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
