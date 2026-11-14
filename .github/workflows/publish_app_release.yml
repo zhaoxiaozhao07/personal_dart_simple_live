@@ -180,7 +180,7 @@ jobs:
           target_commitish: "${{ github.sha }}"
           generate_release_notes: true
           prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
-          token: ${{ secrets.TOKEN }}
+          token: ${{ github.token }}
           files: |
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
             simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
@@ -265,7 +265,7 @@ jobs:
           target_commitish: "${{ github.sha }}"
           generate_release_notes: true
           prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
-          token: ${{ secrets.TOKEN }}
+          token: ${{ github.token }}
           files: |
             simple_live_app/build/dist/*/*.deb
             simple_live_app/build/dist/*/*.zip
@@ -339,7 +339,7 @@ jobs:
           target_commitish: "${{ github.sha }}"
           generate_release_notes: true
           prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
-          token: ${{ secrets.TOKEN }}
+          token: ${{ github.token }}
           files: |
             simple_live_app/build/dist/*/*.msix
             simple_live_app/build/dist/*/*.zip
