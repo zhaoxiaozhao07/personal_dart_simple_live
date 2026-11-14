@@ -1,0 +1,239 @@
+name: sync-upstream-and-release
+
+# 支持网页手动一键同步与每天定时巡检上游更新
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: "上游同步分支（auto 自动对比 master 与 dev 选择较新分支）"
+        required: true
+        type: choice
+        default: auto
+        options:
+          - auto
+          - dev
+          - master
+      release_mode:
+        description: "同步后触发发布策略（auto 有更新或新版本时构建；always 强制重建；sync_only 仅同步）"
+        required: true
+        type: choice
+        default: auto
+        options:
+          - auto
+          - always
+          - sync_only
+      tag:
+        description: "自定义 Release Tag（留空则自动从 pubspec.yaml 生成 v<version>）"
+        required: false
+        type: string
+  schedule:
+    # 每天 UTC 02:00（北京时间 10:00）自动检查上游更新
+    - cron: "0 2 * * *"
+
+concurrency:
+  group: sync-upstream-and-release
+  cancel-in-progress: false
+
+jobs:
+  sync-and-trigger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 检出当前仓库完整历史
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 校验 TOKEN 权限并同步上游更新
+        id: sync
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.TOKEN }}
+          UPSTREAM_INPUT: ${{ inputs.upstream_branch || 'auto' }}
+          RELEASE_MODE: ${{ inputs.release_mode || 'auto' }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+
+          # 1. 校验 PAT 是否配置且有效
+          if [[ -z "${GH_PAT}" ]]; then
+            echo "::error::未配置 secrets.TOKEN，请在仓库 Settings -> Secrets and variables -> Actions 中配置具备 repo 与 workflow 权限的 PAT。"
+            exit 1
+          fi
+
+          HEADER_FILE="$(mktemp)"
+          ASKPASS_SCRIPT="$(mktemp)"
+          trap 'rm -f "${HEADER_FILE}" "${ASKPASS_SCRIPT}"' EXIT
+
+          HTTP_CODE=$(curl -sS -o /dev/null -D "${HEADER_FILE}" -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            https://api.github.com/user)
+          if [[ "${HTTP_CODE}" != "200" ]]; then
+            echo "::error::secrets.TOKEN 鉴权失败（HTTP ${HTTP_CODE}），请检查 PAT 是否过期或无效。"
+            exit 1
+          fi
+
+          SCOPES=$(grep -i '^x-oauth-scopes:' "${HEADER_FILE}" | cut -d':' -f2- | tr -d '\r' || true)
+          if [[ -n "${SCOPES}" ]]; then
+            echo "检测到 PAT scopes:${SCOPES}"
+            if ! grep -Fqw 'repo' <<< "${SCOPES}" || ! grep -Fqw 'workflow' <<< "${SCOPES}"; then
+              echo "::warning::当前 PAT 权限为 [${SCOPES} ]，若上游更新了 .github/workflows/ 文件，推送时可能缺少 workflow 权限。"
+            fi
+          else
+            echo "PAT 鉴权通过（Fine-grained PAT 或未返回 x-oauth-scopes 头）"
+          fi
+
+          # 2. 配置 Git 凭证（通过 GIT_ASKPASS 传入 PAT，避免被 extraheader 覆盖或写入磁盘）
+          chmod 700 "${ASKPASS_SCRIPT}"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" "x-access-token" ;;' \
+            '  *Password*) printf "%s\n" "${GH_PAT}" ;;' \
+            'esac' > "${ASKPASS_SCRIPT}"
+          export GIT_ASKPASS="${ASKPASS_SCRIPT}"
+          export GIT_TERMINAL_PROMPT=0
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 3. 拉取当前 origin 分支与上游仓库最新代码（不拉取上游历史 Tag）
+          git fetch origin --no-tags +refs/heads/dev:refs/remotes/origin/dev +refs/heads/master:refs/remotes/origin/master
+
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/xiaoyaocz/dart_simple_live.git
+          else
+            git remote add upstream https://github.com/xiaoyaocz/dart_simple_live.git
+          fi
+          git fetch upstream --no-tags +refs/heads/master:refs/remotes/upstream/master +refs/heads/dev:refs/remotes/upstream/dev
+
+          MASTER_TS=$(git log -1 --format="%ct" refs/remotes/upstream/master)
+          DEV_TS=$(git log -1 --format="%ct" refs/remotes/upstream/dev)
+
+          if [[ "${UPSTREAM_INPUT}" == "auto" ]]; then
+            if (( DEV_TS >= MASTER_TS )); then
+              TARGET_UPSTREAM_BRANCH="dev"
+            else
+              TARGET_UPSTREAM_BRANCH="master"
+            fi
+          else
+            TARGET_UPSTREAM_BRANCH="${UPSTREAM_INPUT}"
+          fi
+
+          UPSTREAM_REF="refs/remotes/upstream/${TARGET_UPSTREAM_BRANCH}"
+          UPSTREAM_SHA=$(git rev-parse "${UPSTREAM_REF}")
+          UPSTREAM_SHORT=$(git rev-parse --short "${UPSTREAM_SHA}")
+          UPSTREAM_MSG=$(git log -1 --format="%s (%ci)" "${UPSTREAM_REF}")
+          echo "选定上游分支: upstream/${TARGET_UPSTREAM_BRANCH} -> ${UPSTREAM_SHORT} | ${UPSTREAM_MSG}"
+
+          # 4. 同步纯镜像分支 dev
+          BEFORE_DEV_SHA=$(git rev-parse refs/remotes/origin/dev)
+          git checkout -B dev refs/remotes/origin/dev
+          if ! git merge --no-edit -m "chore: 同步上游 ${TARGET_UPSTREAM_BRANCH} 分支 (${UPSTREAM_SHORT})" "${UPSTREAM_REF}"; then
+            git merge --abort || true
+            git checkout -B dev refs/remotes/origin/dev
+            git merge -s ours --no-commit --allow-unrelated-histories "${UPSTREAM_REF}"
+            git read-tree --reset -u "${UPSTREAM_REF}"
+            git commit -m "chore: 同步上游 ${TARGET_UPSTREAM_BRANCH} 分支 (${UPSTREAM_SHORT})"
+          fi
+          AFTER_DEV_SHA=$(git rev-parse HEAD)
+          DEV_UPDATED=false
+          if [[ "${BEFORE_DEV_SHA}" != "${AFTER_DEV_SHA}" ]]; then
+            git push origin dev:refs/heads/dev
+            DEV_UPDATED=true
+          fi
+
+          # 5. 同步发布分支 master（除发布 workflow 定制文件外，其余冲突以上游为准）
+          BEFORE_MASTER_SHA=$(git rev-parse refs/remotes/origin/master)
+          git checkout -B master refs/remotes/origin/master
+          NEED_MANUAL_REVIEW=false
+          if ! git merge --no-edit -m "chore: 合并上游 ${TARGET_UPSTREAM_BRANCH} 更新 (${UPSTREAM_SHORT})" "${UPSTREAM_REF}"; then
+            CONFLICTS=$(git ls-files -u | wc -l)
+            if [[ "${CONFLICTS}" -eq 0 ]]; then
+              echo "::error::合并上游 ${TARGET_UPSTREAM_BRANCH} 至 master 分支失败。"
+              exit 1
+            fi
+            while IFS= read -r -d '' file; do
+              if [[ "${file}" == ".github/workflows/publish_app_release.yml" || "${file}" == ".github/workflows/sync_upstream_and_release.yml" ]]; then
+                git checkout --ours -- "${file}"
+                git add -- "${file}"
+                NEED_MANUAL_REVIEW=true
+              else
+                if git checkout --theirs -- "${file}" 2>/dev/null; then
+                  git add -- "${file}"
+                else
+                  git rm -f -- "${file}"
+                fi
+              fi
+            done < <(git diff -z --name-only --diff-filter=U)
+            git commit -m "chore: 合并上游 ${TARGET_UPSTREAM_BRANCH} 更新并保留发布配置 (${UPSTREAM_SHORT})"
+          fi
+          AFTER_MASTER_SHA=$(git rev-parse HEAD)
+          MASTER_UPDATED=false
+          if [[ "${BEFORE_MASTER_SHA}" != "${AFTER_MASTER_SHA}" ]]; then
+            git push origin master:refs/heads/master
+            MASTER_UPDATED=true
+          fi
+
+          # 6. 确定目标版本号与 Release Tag
+          INPUT_TAG=$(printf '%s' "${INPUT_TAG}" | tr -d '[:space:]')
+          if [[ -n "${INPUT_TAG}" ]]; then
+            TARGET_TAG="${INPUT_TAG}"
+            if [[ "${TARGET_TAG}" != v* ]]; then
+              TARGET_TAG="v${TARGET_TAG}"
+            fi
+          else
+            APP_VERSION=$(grep -E '^version:' simple_live_app/pubspec.yaml | head -n 1 | awk '{print $2}' | tr -d "\r\"'" | cut -d'+' -f1)
+            TARGET_TAG="v${APP_VERSION}"
+          fi
+
+          REMOTE_TAG_SHA=$(git ls-remote --tags origin "refs/tags/${TARGET_TAG}" | awk '{print $1}' | head -n 1 || true)
+          TAG_EXISTS=false
+          if [[ -n "${REMOTE_TAG_SHA}" ]]; then
+            TAG_EXISTS=true
+          fi
+
+          SHOULD_RELEASE=false
+          if [[ "${RELEASE_MODE}" == "sync_only" ]]; then
+            SHOULD_RELEASE=false
+          elif [[ "${RELEASE_MODE}" == "always" ]]; then
+            SHOULD_RELEASE=true
+          else
+            if [[ "${MASTER_UPDATED}" == "true" || "${TAG_EXISTS}" == "false" ]]; then
+              SHOULD_RELEASE=true
+            fi
+          fi
+
+          TRIGGERED_RELEASE=false
+          if [[ "${SHOULD_RELEASE}" == "true" ]]; then
+            # 通过 PAT 推送 Tag，以自动触发 app-build-action 构建并发布 Release
+            if [[ "${TAG_EXISTS}" == "true" ]]; then
+              git push origin ":refs/tags/${TARGET_TAG}"
+            fi
+            git tag -f "${TARGET_TAG}" "${AFTER_MASTER_SHA}"
+            git push origin "refs/tags/${TARGET_TAG}"
+            TRIGGERED_RELEASE=true
+          fi
+
+          # 7. 输出本次执行摘要
+          {
+            echo "### 上游同步结果摘要"
+            echo ""
+            echo "- 选定上游分支: \`upstream/${TARGET_UPSTREAM_BRANCH}\` (\`${UPSTREAM_SHORT}\`)"
+            echo "- 上游最新提交: ${UPSTREAM_MSG}"
+            echo "- \`dev\` 分支是否更新: \`${DEV_UPDATED}\`"
+            echo "- \`master\` 分支是否更新: \`${MASTER_UPDATED}\`"
+            echo "- 目标版本 Tag: \`${TARGET_TAG}\`（推送前已存在: \`${TAG_EXISTS}\`）"
+            echo "- 发布策略 (\`release_mode\`): \`${RELEASE_MODE}\`"
+            echo "- 是否已推送 Tag 触发 \`app-build-action\`: \`${TRIGGERED_RELEASE}\`"
+            if [[ "${NEED_MANUAL_REVIEW}" == "true" ]]; then
+              echo ""
+              echo "> 注意：本次合并时上游改动了发布 workflow 文件，已自动保留本仓库现有发布配置；建议核对上游对该 workflow 是否有环境或依赖升级。"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${NEED_MANUAL_REVIEW}" == "true" ]]; then
+            echo "::warning::上游改动了 .github/workflows/publish_app_release.yml，本次已自动保留本地定制版本，请核对上游是否有新构建环境变更。"
+          fi
