@@ -1,6 +1,12 @@
 name: app-build-action
-#推送Tag时触发
+#支持手动触发与Tag推送时触发
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag（如 v1.11.7；留空则自动按 pubspec.yaml 生成 v<version>）"
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -20,8 +26,6 @@ jobs:
     steps:
       #签出代码
       - uses: actions/checkout@v6
-        with:
-          ref: master
 
       # device_info_plus 12.4.0 使用 iOS 26.1 SDK 新增的 isiOSAppOnVision API。
       # macos-15-intel 默认使用 Xcode 16.4，因此显式选择 runner 已安装的新版本。
@@ -148,24 +152,34 @@ jobs:
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
 
-      #读取版本信息
-      - name: Read version
+      #获取版本信息（自动从 Git Tag 或 pubspec.yaml 提取）
+      - name: Get release tag
         id: version
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: assets/app_version.json
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            TAG_NAME="${INPUT_TAG}"
+          else
+            APP_VERSION=$(grep -E '^version:' simple_live_app/pubspec.yaml | head -n 1 | awk '{print $2}' | tr -d '\r' | cut -d'+' -f1)
+            TAG_NAME="v${APP_VERSION}"
+          fi
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
       - name: Echo version
-        run: echo "${{ fromJson(steps.version.outputs.content).version }}"
-      - name: Echo version content
-        run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
+        run: echo "${{ steps.version.outputs.TAG_NAME }}"
 
       #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v3
         with:
-          name: "${{ fromJson(steps.version.outputs.content).version }}"
-          body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
-          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
+          tag_name: "${{ steps.version.outputs.TAG_NAME }}"
+          name: "${{ steps.version.outputs.TAG_NAME }}"
+          target_commitish: "${{ github.sha }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
           token: ${{ secrets.TOKEN }}
           files: |
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
@@ -185,8 +199,6 @@ jobs:
     steps:
       # 签出代码
       - uses: actions/checkout@v6
-        with:
-          ref: master
 
       # 设置Flutter环境
       - name: Setup Flutter
@@ -225,24 +237,34 @@ jobs:
             simple_live_app/build/dist/*/*.deb
             simple_live_app/build/dist/*/*.zip
 
-      # 读取版本信息
-      - name: Read version
+      # 获取版本信息（自动从 Git Tag 或 pubspec.yaml 提取）
+      - name: Get release tag
         id: version
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: assets/app_version.json
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            TAG_NAME="${INPUT_TAG}"
+          else
+            APP_VERSION=$(grep -E '^version:' simple_live_app/pubspec.yaml | head -n 1 | awk '{print $2}' | tr -d '\r' | cut -d'+' -f1)
+            TAG_NAME="v${APP_VERSION}"
+          fi
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
       - name: Echo version
-        run: echo "${{ fromJson(steps.version.outputs.content).version }}"
-      - name: Echo version content
-        run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
+        run: echo "${{ steps.version.outputs.TAG_NAME }}"
 
       #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v3
         with:
-          name: "${{ fromJson(steps.version.outputs.content).version }}"
-          body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
-          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
+          tag_name: "${{ steps.version.outputs.TAG_NAME }}"
+          name: "${{ steps.version.outputs.TAG_NAME }}"
+          target_commitish: "${{ github.sha }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
           token: ${{ secrets.TOKEN }}
           files: |
             simple_live_app/build/dist/*/*.deb
@@ -258,8 +280,6 @@ jobs:
     steps:
       # 签出代码
       - uses: actions/checkout@v6
-        with:
-          ref: master
       # 设置Flutter环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -291,24 +311,34 @@ jobs:
             simple_live_app/build/dist/*/*.msix
             simple_live_app/build/dist/*/*.zip
 
-      # 读取版本信息
-      - name: Read version
+      # 获取版本信息（自动从 Git Tag 或 pubspec.yaml 提取）
+      - name: Get release tag
         id: version
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: assets/app_version.json
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            TAG_NAME="${INPUT_TAG}"
+          else
+            APP_VERSION=$(grep -E '^version:' simple_live_app/pubspec.yaml | head -n 1 | awk '{print $2}' | tr -d '\r' | cut -d'+' -f1)
+            TAG_NAME="v${APP_VERSION}"
+          fi
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
       - name: Echo version
-        run: echo "${{ fromJson(steps.version.outputs.content).version }}"
-      - name: Echo version content
-        run: echo "${{ fromJson(steps.version.outputs.content).version_desc }}"
+        run: echo "${{ steps.version.outputs.TAG_NAME }}"
 
       #上传至Release
       - name: Upload Release
         uses: softprops/action-gh-release@v3
         with:
-          name: "${{ fromJson(steps.version.outputs.content).version }}"
-          body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
-          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
+          tag_name: "${{ steps.version.outputs.TAG_NAME }}"
+          name: "${{ steps.version.outputs.TAG_NAME }}"
+          target_commitish: "${{ github.sha }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.TAG_NAME, 'beta') || contains(steps.version.outputs.TAG_NAME, 'alpha') }}
           token: ${{ secrets.TOKEN }}
           files: |
             simple_live_app/build/dist/*/*.msix
